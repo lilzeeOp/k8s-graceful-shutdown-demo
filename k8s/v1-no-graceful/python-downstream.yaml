@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-downstream
+  labels:
+    app: python-downstream
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: python-downstream
+  template:
+    metadata:
+      labels:
+        app: python-downstream
+    spec:
+      containers:
+        - name: python-downstream
+          image: python-downstream:v1
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          env:
+            - name: UPSTREAM_URL
+              value: "http://go-upstream:7000"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-downstream
+spec:
+  selector:
+    app: python-downstream
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: LoadBalancer
