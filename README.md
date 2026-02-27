@@ -4,11 +4,12 @@ A hands-on demo that shows **why graceful shutdown matters in Kubernetes**. We d
 
 ## What This Demo Proves
 
-| | Without graceful shutdown | With graceful shutdown |
-|--|---|---|
-| Errors during restart | 22 (0.72%) | **0 (0.00%)** |
-| Worst response time | 5,061ms | 279ms |
-| Requests dropped | Yes | **No** |
+| | v1: No protection | v2: Graceful shutdown | v3: Graceful + retry |
+|--|---|---|---|
+| Errors during restart | 22 (0.72%) | **0 (0.00%)** | **0 (0.00%)** |
+| Worst response time | 5,061ms | 279ms | ~similar |
+| Requests dropped | Yes | **No** | **No** |
+| Client retries | N/A | N/A | Tracked |
 
 ## Architecture
 
@@ -79,13 +80,35 @@ kubectl rollout restart deployment go-upstream
 
 This time — **zero errors**. The restart happens seamlessly.
 
-### Step 4: Cleanup
+### Step 4: Deploy v3 (graceful shutdown + client retry) and test
 
 ```bash
-kubectl delete -f k8s/v2-graceful/
+# Rebuild python-downstream to include retry logic
+docker build -t python-downstream:v1 ./python-downstream
+
+kubectl apply -f k8s/v3-graceful-retry/
+kubectl get pods -w                      # wait until new pods are ready
 ```
 
-## What's Different Between v1 and v2?
+Repeat the same test:
+
+```bash
+# Terminal 1
+k6 run loadtest/test.js
+
+# Terminal 2
+kubectl rollout restart deployment go-upstream
+```
+
+Same zero errors as v2, but now the k6 summary also shows a `retry_count` metric — how many requests needed a retry before succeeding. This is your safety net: even if a transient error slips past graceful shutdown, the client retries on another pod instead of failing.
+
+### Step 5: Cleanup
+
+```bash
+kubectl delete -f k8s/v3-graceful-retry/
+```
+
+## What's Different Between v1, v2, and v3?
 
 ### v1 — No protection
 
@@ -148,7 +171,19 @@ K8s checks `/health` every few seconds. Only pods that respond 200 get traffic. 
 
 Gives the pod 30 seconds total to finish shutting down. If it's still alive after 30s, K8s force-kills it.
 
-## The Full Shutdown Sequence (v2)
+### v3 — Graceful shutdown + client-side retry
+
+Everything from v2, plus the Python downstream now retries transient failures:
+
+- **Persistent HTTP client** — reuses connections across requests instead of creating a new client per request
+- **tenacity retry** — up to 3 attempts, 0.5s wait between retries
+- **Retries on**: `ConnectError`, `ReadTimeout`, HTTP 500/502/503/504
+- **Does NOT retry on**: 4xx errors (client errors aren't transient)
+- **`retries` field in response** — every response now includes how many retries it took, so the load test can track it
+
+This is a defense-in-depth approach: even if something slips past the server-side graceful shutdown (e.g. a brief DNS hiccup, a pod killed before endpoint removal propagates), the client recovers automatically.
+
+## The Full Shutdown Sequence (v2/v3)
 
 ```
 1. K8s creates a NEW pod (maxSurge: 1)
@@ -180,7 +215,10 @@ k8s-graceful-shutdown-demo/
 │   ├── v1-no-graceful/       # K8s manifests WITHOUT graceful shutdown
 │   │   ├── go-upstream.yaml
 │   │   └── python-downstream.yaml
-│   └── v2-graceful/          # K8s manifests WITH graceful shutdown
+│   ├── v2-graceful/          # K8s manifests WITH graceful shutdown
+│   │   ├── go-upstream.yaml
+│   │   └── python-downstream.yaml
+│   └── v3-graceful-retry/    # v2 + client-side retry in Python app
 │       ├── go-upstream.yaml
 │       └── python-downstream.yaml
 ├── loadtest/

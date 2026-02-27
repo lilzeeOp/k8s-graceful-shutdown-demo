@@ -7,6 +7,7 @@ const errorRate = new Rate("error_rate");
 const errorCount = new Counter("error_count");
 const successCount = new Counter("success_count");
 const latency = new Trend("request_latency", true);
+const retryCount = new Counter("retry_count");
 
 export const options = {
   vus: 15,
@@ -20,6 +21,18 @@ export default function () {
   const res = http.get("http://localhost:8000/");
 
   const isSuccess = res.status === 200;
+
+  let retries = 0;
+  try {
+    const body = JSON.parse(res.body);
+    retries = body.retries || 0;
+  } catch {
+    // ignore parse errors
+  }
+
+  if (retries > 0) {
+    retryCount.add(retries);
+  }
 
   check(res, {
     "status is 200": (r) => r.status === 200,
@@ -56,11 +69,13 @@ export function handleSummary(data) {
     (data.metrics.error_count?.values?.count || 0);
   const errors = data.metrics.error_count?.values?.count || 0;
   const rate = data.metrics.error_rate?.values?.rate || 0;
+  const retries = data.metrics.retry_count?.values?.count || 0;
 
   console.log("\n========== SUMMARY ==========");
   console.log(`Total requests: ${totalRequests}`);
   console.log(`Errors:         ${errors}`);
   console.log(`Error rate:     ${(rate * 100).toFixed(2)}%`);
+  console.log(`Retries:        ${retries}`);
   console.log("=============================\n");
 
   return {
