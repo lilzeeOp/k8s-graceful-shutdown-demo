@@ -10,7 +10,7 @@ from tenacity import (
     retry_if_exception_type,
     retry_if_result,
     stop_after_attempt,
-    wait_fixed,
+    wait_exponential,
 )
 
 UPSTREAM_URL = os.getenv("UPSTREAM_URL", "http://go-upstream:7000")
@@ -37,7 +37,7 @@ def _is_server_error(response: httpx.Response) -> bool:
 
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_fixed(0.5),
+    wait=wait_exponential(multiplier=0.5, max=2),
     retry=(
         retry_if_exception_type((httpx.ConnectError, httpx.ReadTimeout))
         | retry_if_result(_is_server_error)

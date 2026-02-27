@@ -6,10 +6,10 @@ A hands-on demo that shows **why graceful shutdown matters in Kubernetes**. We d
 
 | | v1: No protection | v2: Graceful shutdown | v3: Graceful + retry |
 |--|---|---|---|
-| Errors during restart | 22 (0.72%) | **0 (0.00%)** | **0 (0.00%)** |
-| Worst response time | 5,061ms | 279ms | ~similar |
+| Errors during restart | 25 (0.83%) | **0 (0.00%)** | **0 (0.00%)** |
+| Worst response time | 5,047ms | 285ms | **225ms** |
 | Requests dropped | Yes | **No** | **No** |
-| Client retries | N/A | N/A | Tracked |
+| Client retries needed | N/A | N/A | **0** |
 
 ## Architecture
 
@@ -176,7 +176,7 @@ Gives the pod 30 seconds total to finish shutting down. If it's still alive afte
 Everything from v2, plus the Python downstream now retries transient failures:
 
 - **Persistent HTTP client** — reuses connections across requests instead of creating a new client per request
-- **tenacity retry** — up to 3 attempts, 0.5s wait between retries
+- **tenacity retry** — up to 3 attempts, exponential backoff (0.5s → 1s → 2s) to avoid thundering herd
 - **Retries on**: `ConnectError`, `ReadTimeout`, HTTP 500/502/503/504
 - **Does NOT retry on**: 4xx errors (client errors aren't transient)
 - **`retries` field in response** — every response now includes how many retries it took, so the load test can track it
